@@ -1,13 +1,12 @@
 const express = require('express');
 const axios = require('axios');
 const { parse } = require('@typescript-eslint/typescript-estree');
-const cors = require('cors');
-const app = express();
 
-// Middleware configuration
-app.use(express.json({ limit: '10mb' })); // Increase limit for larger payloads
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(cors());
+
+const app = express();
+app.use(express.json());
+const PORT = 3000;
+
 
 // Utility: get type name from AST node
 function getTypeName(typeNode) {
@@ -19,17 +18,21 @@ function getTypeName(typeNode) {
     return null;
 }
 
+
 // Parse TypeScript code and extract DTOs and endpoints
 function parseFileContent(code, dtoMap) {
     const ast = parse(code, { loc: true, range: true });
     const endpoints = [];
 
+
     function walk(node, controllerName = '') {
         if (!node) return;
+
 
         // Class: detect controller or DTO
         if (node.type === 'ClassDeclaration') {
             const isController = node.decorators?.some(d => d.expression?.callee?.name === 'Controller');
+
 
             if (isController) {
                 const controllerDec = node.decorators.find(d => d.expression?.callee?.name === 'Controller');
@@ -50,6 +53,7 @@ function parseFileContent(code, dtoMap) {
             }
         }
 
+
         // Controller methods
         if (node.type === 'MethodDefinition' && node.decorators?.length > 0) {
             node.decorators.forEach(dec => {
@@ -65,20 +69,24 @@ function parseFileContent(code, dtoMap) {
                         responseDto: null
                     };
 
+
                     // Request DTO from method parameters
                     node.value.params?.forEach(param => {
                         const typeName = getTypeName(param.typeAnnotation?.typeAnnotation);
                         if (typeName && dtoMap.has(typeName)) endpoint.requestDto = dtoMap.get(typeName);
                     });
 
+
                     // Response DTO from return type
                     const returnTypeName = getTypeName(node.value.returnType?.typeAnnotation);
                     if (returnTypeName && dtoMap.has(returnTypeName)) endpoint.responseDto = dtoMap.get(returnTypeName);
+
 
                     endpoints.push(endpoint);
                 }
             });
         }
+
 
         // Recurse into child nodes
         for (const key in node) {
@@ -88,13 +96,16 @@ function parseFileContent(code, dtoMap) {
         }
     }
 
+
     walk(ast);
     return endpoints;
 }
 
+
 // Recursively fetch all files (handles directories)
 async function fetchAllFiles(items) {
     let files = [];
+
 
     for (const item of items) {
         if (item.type === 'file' && item.name.endsWith('.ts') && !item.name.endsWith('.spec.ts')) {
@@ -105,8 +116,10 @@ async function fetchAllFiles(items) {
         }
     }
 
+
     return files;
 }
+
 
 // Get latest commit SHA of repo
 async function getLatestCommitSha(owner, repo, branch = 'main') {
@@ -119,18 +132,22 @@ async function getLatestCommitSha(owner, repo, branch = 'main') {
     }
 }
 
+
 // Parse GitHub files: build DTO map and endpoints
 async function parseGitHubFiles(items) {
     const dtoMap = new Map();
     let allEndpoints = [];
 
+
     const files = await fetchAllFiles(items);
+
 
     // First pass: build DTO map
     for (const file of files) {
         const response = await axios.get(file.download_url);
         parseFileContent(response.data, dtoMap);
     }
+
 
     // Second pass: extract endpoints and attach DTOs
     for (const file of files) {
@@ -139,72 +156,17 @@ async function parseGitHubFiles(items) {
         allEndpoints = allEndpoints.concat(endpoints.filter(e => e.controller));
     }
 
+
     return allEndpoints;
 }
 
-app.get('/',async (req,res)=>{
-    res.send('Welcome to the Parser API');
-});
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'OK', 
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development'
-    });
-});
-
-// Debug endpoint to see all registered routes
-app.get('/debug', (req, res) => {
-    const routes = [];
-    app._router.stack.forEach(middleware => {
-        if (middleware.route) {
-            routes.push({
-                path: middleware.route.path,
-                methods: Object.keys(middleware.route.methods)
-            });
-        }
-    });
-    res.json({ 
-        routes,
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development'
-    });
-});
-
-// Express POST endpoint (changed from GET to POST)
-app.post('/parse', async (req, res) => {
+// Express POST endpoint
+app.post('/', async (req, res) => {
     try {
-        console.log('Received parse request:', {
-            method: req.method,
-            headers: req.headers,
-            bodyKeys: req.body ? Object.keys(req.body) : 'no body',
-            bodyType: typeof req.body,
-            bodyLength: req.body ? (Array.isArray(req.body) ? req.body.length : 'not array') : 'undefined'
-        });
+        const items = req.body; // Accept old style array directly
+        if (!Array.isArray(items)) return res.status(400).json({ error: 'Expected array of files' });
 
-        // Check if body exists and is properly parsed
-        if (!req.body) {
-            console.log('No request body received');
-            return res.status(400).json({ 
-                error: 'No request body received',
-                received: typeof req.body,
-                headers: req.headers
-            });
-        }
-
-        const items = req.body; // Now this will work properly with POST
-        if (!Array.isArray(items)) {
-            console.log('Invalid request body:', req.body);
-            return res.status(400).json({ 
-                error: 'Expected array of files',
-                received: typeof req.body,
-                bodyKeys: req.body ? Object.keys(req.body) : 'no body'
-            });
-        }
-
-        console.log('Processing', items.length, 'files');
 
         // Optional: extract owner/repo/branch from first file path
         const firstFile = items[0];
@@ -218,30 +180,17 @@ app.post('/parse', async (req, res) => {
             branch = firstFile.html_url.includes('tree') ? parts[6] : 'main';
         }
 
+
         const version = await getLatestCommitSha(owner, repo, branch);
 
+
         const endpoints = await parseGitHubFiles(items);
-        console.log('Successfully parsed', endpoints.length, 'endpoints');
         res.json({ version, endpoints });
     } catch (err) {
-        console.error('Parse endpoint error:', err);
-        res.status(500).json({ 
-            error: 'Parsing failed', 
-            details: err.message,
-            stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-        });
+        console.error(err);
+        res.status(500).json({ error: 'Parsing failed', details: err.message });
     }
 });
 
-// Catch-all route for debugging
-app.use('*', (req, res) => {
-    console.log('404 - Route not found:', req.method, req.originalUrl);
-    res.status(404).json({
-        error: 'Route not found',
-        method: req.method,
-        url: req.originalUrl,
-        availableRoutes: ['GET /', 'GET /health', 'GET /debug', 'POST /parse']
-    });
-});
 
-app.listen(3000, () => console.log(`🚀 Parser API running at http://localhost:${3000}`));
+app.listen(PORT, () => console.log(`🚀 Parser API running at http://localhost:${PORT}`));

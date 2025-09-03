@@ -8,18 +8,6 @@
     ],
     "routes": [
         {
-            "src": "/debug",
-            "dest": "/"
-        },
-        {
-            "src": "/health",
-            "dest": "/"
-        },
-        {
-            "src": "/parse",
-            "dest": "/"
-        },
-        {
             "src": "/(.*)",
             "dest": "/"
         }
