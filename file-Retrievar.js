@@ -16,11 +16,12 @@ async function fetchAllFiles(items) {
                 download_url: item.download_url,
                 type: item.type
             });
-        } else if (item.type === 'dir') {
-            const response = await axios.get(item.url);
-            // GitHub API returns the JSON array directly
-            files = files.concat(await fetchAllFiles(response.data));
-        }
+        } 
+        // else if (item.type === 'dir') {
+        //     const response = await axios.get(item.url);
+        //     // GitHub API returns the JSON array directly
+        //     files = files.concat(await fetchAllFiles(response.data));
+        // }
     }
 
     return files;
