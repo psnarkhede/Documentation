@@ -155,9 +155,44 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Debug endpoint to see all registered routes
+app.get('/debug', (req, res) => {
+    const routes = [];
+    app._router.stack.forEach(middleware => {
+        if (middleware.route) {
+            routes.push({
+                path: middleware.route.path,
+                methods: Object.keys(middleware.route.methods)
+            });
+        }
+    });
+    res.json({ 
+        routes,
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'development'
+    });
+});
+
 // Express POST endpoint (changed from GET to POST)
 app.post('/parse', async (req, res) => {
     try {
+        console.log('Received parse request:', {
+            method: req.method,
+            headers: req.headers,
+            bodyKeys: req.body ? Object.keys(req.body) : 'no body',
+            bodyType: typeof req.body,
+            bodyLength: req.body ? (Array.isArray(req.body) ? req.body.length : 'not array') : 'undefined'
+        });
+
+        // Check if body exists and is properly parsed
+        if (!req.body) {
+            console.log('No request body received');
+            return res.status(400).json({ 
+                error: 'No request body received',
+                received: typeof req.body,
+                headers: req.headers
+            });
+        }
 
         const items = req.body; // Now this will work properly with POST
         if (!Array.isArray(items)) {
@@ -168,6 +203,8 @@ app.post('/parse', async (req, res) => {
                 bodyKeys: req.body ? Object.keys(req.body) : 'no body'
             });
         }
+
+        console.log('Processing', items.length, 'files');
 
         // Optional: extract owner/repo/branch from first file path
         const firstFile = items[0];
@@ -184,6 +221,7 @@ app.post('/parse', async (req, res) => {
         const version = await getLatestCommitSha(owner, repo, branch);
 
         const endpoints = await parseGitHubFiles(items);
+        console.log('Successfully parsed', endpoints.length, 'endpoints');
         res.json({ version, endpoints });
     } catch (err) {
         console.error('Parse endpoint error:', err);
@@ -193,6 +231,17 @@ app.post('/parse', async (req, res) => {
             stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
         });
     }
+});
+
+// Catch-all route for debugging
+app.use('*', (req, res) => {
+    console.log('404 - Route not found:', req.method, req.originalUrl);
+    res.status(404).json({
+        error: 'Route not found',
+        method: req.method,
+        url: req.originalUrl,
+        availableRoutes: ['GET /', 'GET /health', 'GET /debug', 'POST /parse']
+    });
 });
 
 app.listen(3000, () => console.log(`🚀 Parser API running at http://localhost:${3000}`));
