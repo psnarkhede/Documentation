@@ -161,8 +161,13 @@ async function parseGitHubFiles(items) {
 }
 
 
+app.get('/', (req, res) => {
+    res.json({ message: 'Welcome to the Parser API' });
+});
+
+
 // Express POST endpoint
-app.post('/', async (req, res) => {
+app.post('/parse', async (req, res) => {
     try {
         const items = req.body; // Accept old style array directly
         if (!Array.isArray(items)) return res.status(400).json({ error: 'Expected array of files' });
