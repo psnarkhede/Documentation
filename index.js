@@ -152,7 +152,6 @@ const cors = require('cors');
 const app = express();
 app.use(express.json());
 app.use(cors());
-const PORT = 3000;
 
 // Utility: get type name from AST node
 function getTypeName(typeNode) {
@@ -287,8 +286,12 @@ async function parseGitHubFiles(items) {
     return allEndpoints;
 }
 
-// Express POST endpoint
-app.post('/parse', async (req, res) => {
+app.get('/',async (req,res)=>{
+    res.send('Welcome to the Parser API');
+});
+
+// Express GET endpoint
+app.get('/parse', async (req, res) => {
     try {
         const items = req.body; // Accept old style array directly
         if (!Array.isArray(items)) return res.status(400).json({ error: 'Expected array of files' });
@@ -315,4 +318,4 @@ app.post('/parse', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`🚀 Parser API running at http://localhost:${PORT}`));
+app.listen(3000, () => console.log(`🚀 Parser API running at http://localhost:${3000}`));
