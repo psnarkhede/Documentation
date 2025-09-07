@@ -496,7 +496,6 @@ parserRoute.post("/", async (req, res) => {
     // Now build developerGuide, architectureDocumentation, other arrays using all repo files
     const developerGuide = [];
     const architectureDocumentation = [];
-    const other = [];
 
     const repoFiles = await fetchAllRepoFiles(items);
 
@@ -516,8 +515,6 @@ parserRoute.post("/", async (req, res) => {
           if (!architectureDocumentation.some((f) => f.path === contentObj.path)) architectureDocumentation.push(contentObj);
         } else if (["main.ts", "package.json", "nest-cli.json", "README.md"].includes(file.name)) {
           if (!architectureDocumentation.some((f) => f.path === contentObj.path)) architectureDocumentation.push(contentObj);
-        } else {
-          other.push(contentObj);
         }
       } catch (err) {
         console.warn(`Failed to fetch ${file.download_url}: ${err.message}`);
@@ -548,8 +545,7 @@ parserRoute.post("/", async (req, res) => {
       version,
       apiDocumentation: allEndpoints,
       developerGuide,
-      architectureDocumentation,
-      other,
+      architectureDocumentation
     });
   } catch (err) {
     console.error(err);
