@@ -4,7 +4,6 @@ app.use(express.json());
 const PORT = 3000;
 
 const parserRoute = require('./parser');
-const fileRetrievarRoute = require('./file-Retrievar');
 
 app.get('/', (req, res) => {
     res.json({ message: 'Welcome to the Parser API' });
