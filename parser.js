@@ -263,12 +263,13 @@ parserRoute.post("/", async (req,res)=>{
           responseDto: expandDto(dtoMap, ep.responseDto)
         }
       });
-      if(endpoints.length) allEndpoints.push({name:file.name, path:file.path, endpoints});
+      if(endpoints.length) allEndpoints.push({version, name:file.name, path:file.path, endpoints});
     }
 
     const developerGuide = [];
     const architectureDocumentation = [];
     const onboardingDocument = [];
+    const userManual = [];
 
     const repoFiles = await fetchAllRepoFiles(items);
     for(const file of repoFiles){
@@ -276,7 +277,8 @@ parserRoute.post("/", async (req,res)=>{
       const content = await fetchFileContent(file.download_url, cache);
       if(!content) continue;
 
-      const contentObj = {name:file.name, path:file.path, content};
+      const contentObj = {version, name:file.name, path:file.path, content};
+
       if(file.name.endsWith(".module.ts") || file.name.endsWith(".service.ts") || file.name.endsWith(".controller.ts")){
         developerGuide.push(contentObj);
         if(!architectureDocumentation.some(f=>f.path===contentObj.path)) architectureDocumentation.push(contentObj);
@@ -285,6 +287,10 @@ parserRoute.post("/", async (req,res)=>{
       } else if(["main.ts","package.json","nest-cli.json","README.md"].includes(file.name)){
         if(!architectureDocumentation.some(f=>f.path===contentObj.path)) architectureDocumentation.push(contentObj);
         onboardingDocument.push(contentObj);
+        // Only keep necessary ones for user manual
+        if(["README.md","package.json"].includes(file.name)){
+          userManual.push(contentObj);
+        }
       }
     }
 
@@ -298,12 +304,18 @@ parserRoute.post("/", async (req,res)=>{
     });
 
     dtoSet.forEach((dto,name)=>{
-      const dtoContent = {name:`${name}.ts`, path:`dto/${name}.ts`, content:generateDtoContent(dto)};
+      const dtoContent = {version, name:`${name}.ts`, path:`dto/${name}.ts`, content:generateDtoContent(dto)};
       if(!developerGuide.some(f=>f.name===dtoContent.name && f.path===dtoContent.path)) developerGuide.push(dtoContent);
       if(!architectureDocumentation.some(f=>f.name===dtoContent.name && f.path===dtoContent.path)) architectureDocumentation.push(dtoContent);
     });
 
-    res.json({version, apiDocumentation:allEndpoints, developerGuide, architectureDocumentation, onboardingDocument});
+    res.json({
+      apiDocumentation: allEndpoints,
+      developerGuide,
+      architectureDocumentation,
+      onboardingDocument,
+      userManual
+    });
   }catch(err){
     console.error(err);
     res.status(500).json({error:"Parsing failed", details:err.message});
