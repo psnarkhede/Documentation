@@ -11,6 +11,5 @@ app.get('/', (req, res) => {
 });
 
 app.use('/parse', parserRoute);
-app.use('/files', fileRetrievarRoute);
 
 app.listen(PORT, () => console.log(`🚀 Parser API running at http://localhost:${PORT}`));
