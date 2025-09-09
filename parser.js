@@ -7,9 +7,7 @@ const parserRoute = express.Router();
 /* ---------- GitHub authentication ---------- */
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const axiosInstance = axios.create({
-  headers: GITHUB_TOKEN
-    ? { Authorization: `token ${GITHUB_TOKEN}` }
-    : {},
+  headers: GITHUB_TOKEN ? { Authorization: `token ${GITHUB_TOKEN}` } : {},
 });
 
 /* ---------- Type extraction helpers ---------- */
@@ -31,42 +29,53 @@ function getTypeName(typeNode) {
         return typeNode.typeName.right.name;
       }
       return "any";
-    case "TSStringKeyword": return "string";
-    case "TSNumberKeyword": return "number";
-    case "TSBooleanKeyword": return "boolean";
-    case "TSAnyKeyword": return "any";
-    case "TSUnknownKeyword": return "unknown";
-    case "TSVoidKeyword": return "void";
-    case "TSArrayType": return (getTypeName(typeNode.elementType) || "any") + "[]";
-    case "TSUnionType": return typeNode.types.map(t => getTypeName(t) || "any").join(" | ");
-    case "TSTypeLiteral": return "object";
-    case "TSLiteralType": return typeNode.literal?.value !== undefined
-      ? JSON.stringify(typeNode.literal.value)
-      : "literal";
-    default: return "any";
+    case "TSStringKeyword":
+      return "string";
+    case "TSNumberKeyword":
+      return "number";
+    case "TSBooleanKeyword":
+      return "boolean";
+    case "TSAnyKeyword":
+      return "any";
+    case "TSUnknownKeyword":
+      return "unknown";
+    case "TSVoidKeyword":
+      return "void";
+    case "TSArrayType":
+      return (getTypeName(typeNode.elementType) || "any") + "[]";
+    case "TSUnionType":
+      return typeNode.types.map((t) => getTypeName(t) || "any").join(" | ");
+    case "TSTypeLiteral":
+      return "object";
+    case "TSLiteralType":
+      return typeNode.literal?.value !== undefined
+        ? JSON.stringify(typeNode.literal.value)
+        : "literal";
+    default:
+      return "any";
   }
 }
 
 /* ---------- Expand nested DTOs recursively ---------- */
 function expandDto(dtoMap, dto, visited = new Set()) {
   if (!dto) return null;
-  if (visited.has(dto.name)) return { name: dto.name }; // prevent infinite recursion
+  if (visited.has(dto.name)) return { name: dto.name }; // prevent infinite loop
   visited.add(dto.name);
 
-  const expanded = { name: dto.name, properties: [] };
-  for (const prop of dto.properties) {
-    const nestedDto = dtoMap.get(prop.type);
-    if (nestedDto) {
-      expanded.properties.push({
-        name: prop.name,
-        type: expandDto(dtoMap, nestedDto, visited),
-        optional: prop.optional,
-      });
-    } else {
-      expanded.properties.push(prop);
-    }
-  }
-  return expanded;
+  return {
+    name: dto.name,
+    properties: dto.properties.map((prop) => {
+      const nestedDto = dtoMap.get(prop.type);
+      if (nestedDto) {
+        return {
+          name: prop.name,
+          type: expandDto(dtoMap, nestedDto, visited),
+          optional: prop.optional,
+        };
+      }
+      return prop;
+    }),
+  };
 }
 
 /* ---------- AST parse: build DTOs and endpoints ---------- */
@@ -77,18 +86,30 @@ function parseFileContent(code, dtoMap) {
   function walk(node, controllerPrefix = "") {
     if (!node) return;
 
+    // Controllers and DTOs
     if (node.type === "ClassDeclaration" && node.id?.name) {
       const decorators = node.decorators || [];
-      const isController = decorators.some(d => {
+      const isController = decorators.some((d) => {
         try {
-          return d.expression?.callee?.name === "Controller" || d.expression?.name === "Controller";
-        } catch { return false; }
+          return (
+            d.expression?.callee?.name === "Controller" ||
+            d.expression?.name === "Controller"
+          );
+        } catch {
+          return false;
+        }
       });
 
       if (isController) {
-        const dec = decorators.find(d => {
-          try { return d.expression?.callee?.name === "Controller" || d.expression?.name === "Controller"; }
-          catch { return false; }
+        const dec = decorators.find((d) => {
+          try {
+            return (
+              d.expression?.callee?.name === "Controller" ||
+              d.expression?.name === "Controller"
+            );
+          } catch {
+            return false;
+          }
         });
         let path = "/";
         try {
@@ -97,6 +118,7 @@ function parseFileContent(code, dtoMap) {
         } catch {}
         controllerPrefix = path.startsWith("/") ? path : "/" + path;
       } else {
+        // DTO class
         const dto = { name: node.id.name, properties: [] };
         for (const prop of node.body.body) {
           if (prop.type === "PropertyDefinition" && prop.key?.name) {
@@ -111,45 +133,97 @@ function parseFileContent(code, dtoMap) {
       }
     }
 
-    if (node.type === "MethodDefinition" && (node.decorators || []).length > 0) {
-      (node.decorators || []).forEach(dec => {
+    // Controller methods
+    if (
+      node.type === "MethodDefinition" &&
+      (node.decorators || []).length > 0
+    ) {
+      (node.decorators || []).forEach((dec) => {
         let decName;
-        try { decName = dec.expression?.callee?.name || dec.expression?.name; } catch { decName = null; }
-        if (["Get","Post","Put","Delete","Patch"].includes(decName)) {
+        try {
+          decName = dec.expression?.callee?.name || dec.expression?.name;
+        } catch {
+          decName = null;
+        }
+        if (["Get", "Post", "Put", "Delete", "Patch"].includes(decName)) {
           let routePath = "/";
-          try { const arg = dec.expression?.arguments?.[0]; if(arg) routePath = arg.value || "/"; } catch {}
-          if(!routePath.startsWith("/")) routePath = "/" + routePath;
-          const prefix = controllerPrefix && controllerPrefix !== "/" ? controllerPrefix.replace(/\/$/,"") : "";
-          const fullPath = (prefix + (routePath === "/" ? "/" : routePath)).replace(/\/{2,}/g,"/");
-          const endpoint = { method: decName.toUpperCase(), path: fullPath, functionName: node.key.name, requestDto: null, responseDto: null };
+          try {
+            const arg = dec.expression?.arguments?.[0];
+            if (arg) routePath = arg.value || "/";
+          } catch {}
+          if (!routePath.startsWith("/")) routePath = "/" + routePath;
 
-          (node.value.params || []).forEach(param => {
-            const typeName = getTypeName(param.typeAnnotation?.typeAnnotation);
-            if(typeName) {
-              const candidates = [typeName, typeName.replace(/\[\]$/,""), ...(typeName.match(/<(.+)>/) ? [typeName.replace(/^.+<(.+)>$/,"$1")]:[])];
-              for(const c of candidates) { if(dtoMap.has(c)) { endpoint.requestDto = dtoMap.get(c); break; } }
+          const prefix =
+            controllerPrefix && controllerPrefix !== "/"
+              ? controllerPrefix.replace(/\/$/, "")
+              : "";
+          const fullPath = (prefix + (routePath === "/" ? "/" : routePath)).replace(
+            /\/{2,}/g,
+            "/"
+          );
+
+          const endpoint = {
+            method: decName.toUpperCase(),
+            path: fullPath,
+            functionName: node.key.name,
+            parameters: [],
+            requestDto: null,
+            responseDto: null,
+          };
+
+          // Parameters
+          (node.value.params || []).forEach((param) => {
+            let paramType =
+              getTypeName(param.typeAnnotation?.typeAnnotation) || "any";
+            let paramName = param.name || "param";
+            let source = "unknown";
+
+            if (param.decorators?.length) {
+              param.decorators.forEach((d) => {
+                const dName = d.expression?.callee?.name || d.expression?.name;
+                const arg = d.expression?.arguments?.[0]?.value;
+                if (["Query", "Param", "Body", "Headers"].includes(dName)) {
+                  source = dName.toLowerCase();
+                  if (arg) paramName = arg;
+                }
+              });
+            }
+
+            endpoint.parameters.push({ name: paramName, type: paramType, source });
+
+            // Attach DTO if matches
+            if (dtoMap.has(paramType)) {
+              endpoint.requestDto = expandDto(dtoMap, dtoMap.get(paramType));
             }
           });
 
-          let returnTypeName = getTypeName(node.value.returnType?.typeAnnotation);
-          if(returnTypeName) {
+          // Return type
+          let returnTypeName = getTypeName(
+            node.value.returnType?.typeAnnotation
+          );
+          if (returnTypeName) {
             const promiseMatch = returnTypeName.match(/^Promise<(.+)>$/);
-            if(promiseMatch) returnTypeName = promiseMatch[1];
-            if(returnTypeName.endsWith("[]")) returnTypeName = returnTypeName.replace(/\[\]$/,"");
+            if (promiseMatch) returnTypeName = promiseMatch[1];
+            if (returnTypeName.endsWith("[]"))
+              returnTypeName = returnTypeName.replace(/\[\]$/, "");
             const genericMatch = returnTypeName.match(/^.+<(.+)>$/);
-            if(genericMatch) returnTypeName = genericMatch[1];
+            if (genericMatch) returnTypeName = genericMatch[1];
           }
-          if(returnTypeName && dtoMap.has(returnTypeName)) endpoint.responseDto = dtoMap.get(returnTypeName);
+          if (returnTypeName && dtoMap.has(returnTypeName)) {
+            endpoint.responseDto = expandDto(dtoMap, dtoMap.get(returnTypeName));
+          }
 
           endpoints.push(endpoint);
         }
       });
     }
 
-    for(const key in node){
+    // Recurse
+    for (const key in node) {
       const child = node[key];
-      if(Array.isArray(child)) child.forEach(c => walk(c, controllerPrefix));
-      else if(typeof child === "object" && child !== null) walk(child, controllerPrefix);
+      if (Array.isArray(child)) child.forEach((c) => walk(c, controllerPrefix));
+      else if (typeof child === "object" && child !== null)
+        walk(child, controllerPrefix);
     }
   }
 
@@ -157,24 +231,31 @@ function parseFileContent(code, dtoMap) {
   return endpoints;
 }
 
-/* ---------- GitHub fetch helpers ---------- */
+/* ---------- GitHub helpers ---------- */
 async function fetchFileContent(url, cache) {
-  if(cache.has(url)) return cache.get(url);
-  try{
+  if (cache.has(url)) return cache.get(url);
+  try {
     const res = await axiosInstance.get(url);
     cache.set(url, res.data);
     return res.data;
-  } catch(err){
-    console.warn(`Skipping ${url}: ${err.response?.status} ${err.response?.statusText}`);
+  } catch (err) {
+    console.warn(
+      `Skipping ${url}: ${err.response?.status} ${err.response?.statusText}`
+    );
     return null;
   }
 }
 
-async function fetchAllTsFiles(items){
+async function fetchAllTsFiles(items) {
   let files = [];
-  for(const item of items){
-    if(item.type==="file" && item.name.endsWith(".ts") && !item.name.endsWith(".spec.ts")) files.push(item);
-    else if(item.type==="dir"){
+  for (const item of items) {
+    if (
+      item.type === "file" &&
+      item.name.endsWith(".ts") &&
+      !item.name.endsWith(".spec.ts")
+    )
+      files.push(item);
+    else if (item.type === "dir") {
       const res = await axiosInstance.get(item.url);
       files = files.concat(await fetchAllTsFiles(res.data));
     }
@@ -182,11 +263,11 @@ async function fetchAllTsFiles(items){
   return files;
 }
 
-async function fetchAllRepoFiles(items){
+async function fetchAllRepoFiles(items) {
   let files = [];
-  for(const item of items){
-    if(item.type==="file") files.push(item);
-    else if(item.type==="dir"){
+  for (const item of items) {
+    if (item.type === "file") files.push(item);
+    else if (item.type === "dir") {
       const res = await axiosInstance.get(item.url);
       files = files.concat(await fetchAllRepoFiles(res.data));
     }
@@ -195,32 +276,36 @@ async function fetchAllRepoFiles(items){
 }
 
 /* ---------- Latest commit ---------- */
-async function getLatestCommitSha(owner, repo, branch="main"){
-  try{
-    const res = await axiosInstance.get(`https://api.github.com/repos/${owner}/${repo}/branches/${branch}`);
+async function getLatestCommitSha(owner, repo, branch = "main") {
+  try {
+    const res = await axiosInstance.get(
+      `https://api.github.com/repos/${owner}/${repo}/branches/${branch}`
+    );
     return res.data.commit.sha;
-  }catch(err){
+  } catch (err) {
     console.error("Failed to fetch latest commit SHA", err.message);
     return null;
   }
 }
 
 /* ---------- Generate DTO content ---------- */
-function generateDtoContent(dto){
+function generateDtoContent(dto) {
   let content = `export class ${dto.name} {\n`;
-  dto.properties.forEach(p => {
-    content += `  ${p.name}${p.optional ? "?" : ""}: ${p.type};\n`;
+  dto.properties.forEach((p) => {
+    content += `  ${p.name}${p.optional ? "?" : ""}: ${
+      typeof p.type === "object" ? p.type.name : p.type
+    };\n`;
   });
   content += `}\n`;
   return content;
 }
 
-/* ---------- Collect all nested DTOs recursively ---------- */
+/* ---------- Collect nested DTOs ---------- */
 function collectNestedDtos(dtoMap, dto, collected = new Map()) {
-  if(!dto || collected.has(dto.name)) return;
+  if (!dto || collected.has(dto.name)) return;
   collected.set(dto.name, dto);
-  for(const prop of dto.properties){
-    if(prop.type && typeof prop.type === "object" && prop.type.name){
+  for (const prop of dto.properties) {
+    if (prop.type && typeof prop.type === "object" && prop.type.name) {
       const nestedDto = dtoMap.get(prop.type.name);
       collectNestedDtos(dtoMap, nestedDto, collected);
     }
@@ -228,18 +313,21 @@ function collectNestedDtos(dtoMap, dto, collected = new Map()) {
 }
 
 /* ---------- Main parse route ---------- */
-parserRoute.post("/", async (req,res)=>{
-  try{
+parserRoute.post("/", async (req, res) => {
+  try {
     const items = req.body;
-    if(!Array.isArray(items)) return res.status(400).json({error:"Expected array of files"});
+    if (!Array.isArray(items))
+      return res.status(400).json({ error: "Expected array of files" });
 
     const firstFile = items[0];
-    let owner=null, repo=null, branch="main";
-    if(firstFile && firstFile.download_url){
+    let owner = null,
+      repo = null,
+      branch = "main";
+    if (firstFile && firstFile.download_url) {
       const parts = firstFile.download_url.split("/");
       owner = parts[3];
       repo = parts[4];
-      if(firstFile.download_url.includes("tree")) branch = parts[6];
+      if (firstFile.download_url.includes("tree")) branch = parts[6];
     }
 
     const version = await getLatestCommitSha(owner, repo, branch);
@@ -247,23 +335,27 @@ parserRoute.post("/", async (req,res)=>{
     const cache = new Map();
 
     const tsFiles = await fetchAllTsFiles(items);
-    for(const file of tsFiles){
+    for (const file of tsFiles) {
       const content = await fetchFileContent(file.download_url, cache);
-      if(content) parseFileContent(content, dtoMap);
+      if (content) parseFileContent(content, dtoMap);
     }
 
     const allEndpoints = [];
-    for(const file of tsFiles){
+    for (const file of tsFiles) {
       const content = await fetchFileContent(file.download_url, cache);
-      if(!content) continue;
-      const endpoints = parseFileContent(content, dtoMap).map(ep=>{
-        return {
-          ...ep,
-          requestDto: expandDto(dtoMap, ep.requestDto),
-          responseDto: expandDto(dtoMap, ep.responseDto)
-        }
-      });
-      if(endpoints.length) allEndpoints.push({version, name:file.name, path:file.path, endpoints});
+      if (!content) continue;
+      const endpoints = parseFileContent(content, dtoMap).map((ep) => ({
+        ...ep,
+        requestDto: expandDto(dtoMap, ep.requestDto),
+        responseDto: expandDto(dtoMap, ep.responseDto),
+      }));
+      if (endpoints.length)
+        allEndpoints.push({
+          version,
+          name: file.name,
+          path: file.path,
+          endpoints,
+        });
     }
 
     const developerGuide = [];
@@ -272,41 +364,77 @@ parserRoute.post("/", async (req,res)=>{
     const userManual = [];
 
     const repoFiles = await fetchAllRepoFiles(items);
-    for(const file of repoFiles){
-      if(!file.download_url) continue;
+    for (const file of repoFiles) {
+      if (!file.download_url) continue;
       const content = await fetchFileContent(file.download_url, cache);
-      if(!content) continue;
+      if (!content) continue;
 
-      const contentObj = {version, name:file.name, path:file.path, content};
+      const contentObj = {
+        version,
+        name: file.name,
+        path: file.path,
+        content,
+      };
 
-      if(file.name.endsWith(".module.ts") || file.name.endsWith(".service.ts") || file.name.endsWith(".controller.ts")){
+      if (
+        file.name.endsWith(".module.ts") ||
+        file.name.endsWith(".service.ts") ||
+        file.name.endsWith(".controller.ts")
+      ) {
         developerGuide.push(contentObj);
-        if(!architectureDocumentation.some(f=>f.path===contentObj.path)) architectureDocumentation.push(contentObj);
-      } else if(file.name.endsWith(".dto.ts")){
-        if(!architectureDocumentation.some(f=>f.path===contentObj.path)) architectureDocumentation.push(contentObj);
-      } else if(["main.ts","package.json","nest-cli.json","README.md"].includes(file.name)){
-        if(!architectureDocumentation.some(f=>f.path===contentObj.path)) architectureDocumentation.push(contentObj);
+        if (
+          !architectureDocumentation.some((f) => f.path === contentObj.path)
+        )
+          architectureDocumentation.push(contentObj);
+      } else if (file.name.endsWith(".dto.ts")) {
+        if (
+          !architectureDocumentation.some((f) => f.path === contentObj.path)
+        )
+          architectureDocumentation.push(contentObj);
+      } else if (
+        ["main.ts", "package.json", "nest-cli.json", "README.md"].includes(
+          file.name
+        )
+      ) {
+        if (
+          !architectureDocumentation.some((f) => f.path === contentObj.path)
+        )
+          architectureDocumentation.push(contentObj);
         onboardingDocument.push(contentObj);
-        // Only keep necessary ones for user manual
-        if(["README.md","package.json"].includes(file.name)){
+        if (["README.md", "package.json"].includes(file.name)) {
           userManual.push(contentObj);
         }
       }
     }
 
-    // Include all referenced DTOs and nested DTOs in guides
+    // Include nested DTOs in guides
     const dtoSet = new Map();
-    allEndpoints.forEach(file=>{
-      file.endpoints.forEach(ep=>{
+    allEndpoints.forEach((file) => {
+      file.endpoints.forEach((ep) => {
         collectNestedDtos(dtoMap, ep.requestDto, dtoSet);
         collectNestedDtos(dtoMap, ep.responseDto, dtoSet);
-      })
+      });
     });
 
-    dtoSet.forEach((dto,name)=>{
-      const dtoContent = {version, name:`${name}.ts`, path:`dto/${name}.ts`, content:generateDtoContent(dto)};
-      if(!developerGuide.some(f=>f.name===dtoContent.name && f.path===dtoContent.path)) developerGuide.push(dtoContent);
-      if(!architectureDocumentation.some(f=>f.name===dtoContent.name && f.path===dtoContent.path)) architectureDocumentation.push(dtoContent);
+    dtoSet.forEach((dto, name) => {
+      const dtoContent = {
+        version,
+        name: `${name}.ts`,
+        path: `dto/${name}.ts`,
+        content: generateDtoContent(dto),
+      };
+      if (
+        !developerGuide.some(
+          (f) => f.name === dtoContent.name && f.path === dtoContent.path
+        )
+      )
+        developerGuide.push(dtoContent);
+      if (
+        !architectureDocumentation.some(
+          (f) => f.name === dtoContent.name && f.path === dtoContent.path
+        )
+      )
+        architectureDocumentation.push(dtoContent);
     });
 
     res.json({
@@ -314,11 +442,11 @@ parserRoute.post("/", async (req,res)=>{
       developerGuide,
       architectureDocumentation,
       onboardingDocument,
-      userManual
+      userManual,
     });
-  }catch(err){
+  } catch (err) {
     console.error(err);
-    res.status(500).json({error:"Parsing failed", details:err.message});
+    res.status(500).json({ error: "Parsing failed", details: err.message });
   }
 });
 
